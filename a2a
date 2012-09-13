@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+
+function usage() {
+    echo "Usage: a2a [-c codec] [-e file-extension] [-b bitrate | -p preset | -q quality] [-s audio-sample-rate] file1 ..."
+    echo "Default codec is lame, default preset is standard."
+    echo ""
+    echo "If given the option '-c list', lists all available codecs."
+    echo "If given the option '-e list', lists all available file formats."
+    echo "Note that the -p preset and -q quality parameters are specific to each"
+    echo "codec. For example, the libmp3lame codec has presets like 'standard' and"
+    echo "'extreme'. For the vorbis codec, the quality parameter takes a value"
+    echo "between -1 (low) and 10 (high). For the libfaac codec, the quality is"
+    echo "between 0 (low) and 100 (high)."
+    exit 1
+}
+
+# default options; unset if options are specified (or conflicted)
+ACODEC="libmp3lame"
+AEXT="mp3"
+AEXTOVERRIDE=""
+ABITRATE="0"
+AQUALITY=""
+APRESET="standard"
+ASAMPLERATE="0"
+
+EXTRA_FFMPEG_OPTS=()
+
+while getopts "c:e:b:p:q:s:h" OPT; do
+    case $OPT in
+        h)
+            # help usage
+            usage
+            ;;
+        c)
+            case $OPTARG in
+                list)
+                    # codec list
+                    echo "Available FFmpeg audio codecs for encoding (not all are fully supported):"
+                    ffmpeg -codecs | grep '^..EA' | cut -c 9-
+                    exit 2
+                    ;;
+                lame|mp3|libmp3lame)
+                    ACODEC="libmp3lame"
+                    AEXT="mp3" # specific mpeg-1 layer 3 audio file format with id3v2 tags
+                    ;;
+                mp2)
+                    ACODEC="mp2"
+                    AEXT="mp2"
+                    ;;
+                faac|libfaac)
+                    ACODEC="libfaac" # faac aac encoder
+                    AEXT="m4a" # general mp4/mov file format
+                    ;;
+                aac)
+                    ACODEC="aac" # ffmpeg aac encoder
+                    AEXT="m4a"
+                    ;;
+                alac)
+                    ACODEC="alac"
+                    AEXT="m4a"
+                    ;;
+                ogg|aotuv|libvorbis)
+                    ACODEC="libvorbis" # xiph.org libvorbis encoder
+                    AEXT="ogg" # general ogg file format
+                    ;;
+                vorbis)
+                    ACODEC="vorbis" # ffmpeg vorbis encoder
+                    AEXT="ogg"
+                    EXTRA_FFMPEG_OPTS+=(-strict -2)
+                    ;;
+                flac)
+                    ACODEC="flac"
+                    AEXT="flac" # another less common format is ogg or oga (deprecated)
+                    ;;
+                ac3|ac3_fixed)
+                    ACODEC=$OPTARG
+                    AEXT="ac3" # raw ac3 file format
+                    ;;
+                eac3)
+                    ACODEC="eac3"
+                    AEXT="eac3"
+                    ;;
+                wmav1|wmav2)
+                    ACODEC=$OPTARG
+                    AEXT="wma"
+                    ;;
+                copy|*)
+                    # for copying the codec, or using any other codec, we'll default
+                    # to using matroska audio for the muxing container
+                    ACODEC=$OPTARG
+                    AEXT="mka"
+                    ;;
+            esac
+            ;;
+        e)
+            if [[ $OPTARG == "list" ]]; then
+                echo "Available FFmpeg file formats for muxing (not all are fully supported):"
+                echo "(File extension aliases are also supported, and some are shortened)"
+                ffmpeg -formats | grep '^..E' | cut -c 5-
+                exit 2
+            fi
+            AEXTOVERRIDE=$OPTARG
+            ;;
+        b)
+            ABITRATE=$OPTARG
+            APRESET=""
+            AQUALITY=""
+            ;;
+        p)
+            # note: presets can include a space like "fast standard"
+            APRESET="$OPTARG"
+            ABITRATE="0"
+            AQUALITY=""
+            ;;
+        q)
+            AQUALITY=$OPTARG
+            ABITRATE="0"
+            APRESET=""
+            ;;
+        s)
+            ASAMPLERATE=$OPTARG
+            ;;
+        *)
+            usage
+            ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+FFMPEG_OPTS=(-acodec $ACODEC)
+if [[ $ABITRATE -gt 0 ]]; then
+    FFMPEG_OPTS+=(-ab $ABITRATE)
+fi
+
+if [[ $ASAMPLERATE -gt 0 ]]; then
+    FFMPEG_OPTS+=(-ar $ASAMPLERATE)
+fi
+
+if [[ "x$APRESET" != "x" ]]; then
+    FFMPEG_OPTS+=(-preset $APRESET)
+fi
+
+if [[ "x$AQUALITY" != "x" ]]; then
+    FFMPEG_OPTS+=(-aq $AQUALITY)
+fi
+
+if [[ "x$AEXTOVERRIDE" == "x" ]]; then
+    AEXTOVERRIDE=$AEXT
+fi
+
+# loop through given files and encode as specified!
+for f; do
+    ffmpeg -i "$f" "${EXTRA_FFMPEG_OPTS[@]}" "${FFMPEG_OPTS[@]}" "${f%.*}.$AEXTOVERRIDE"
+done
